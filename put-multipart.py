@@ -5,6 +5,7 @@ import json
 import logging
 from threading import Thread
 from queue import Queue
+import argparse
 
 # Setup logging
 LOG_FILENAME = 's3_upload.log'
@@ -34,22 +35,7 @@ def log_thread(q):
             print(f'LOG ({logging.getLevelName(message[0])}): {message[1]}')
         q.task_done()
 
-# Asks inputs to run run the script
-JSON_IMPORT = input("Do you want to import JSON file for configuration? (yes/no): ")
-
-if JSON_IMPORT.lower() == "yes":
-    JSON_FILE_PATH = input("Enter the JSON file path: ")
-    credentials = read_credentials_from_json(JSON_FILE_PATH)
-    BUCKET_NAME = credentials["bucket_name"]
-    S3_ENDPOINT_URL = credentials["s3_endpoint_url"]
-    AWS_ACCESS_KEY_ID = credentials["aws_access_key_id"]
-    AWS_SECRET_ACCESS_KEY = credentials["aws_secret_access_key"]
-else:
-    BUCKET_NAME = input("Enter the bucket name: ")
-    S3_ENDPOINT_URL = input("Enter the S3 endpoint URL, (EXAMPLE http://example.com:443): ")
-    AWS_ACCESS_KEY_ID = input("Enter the AWS access key ID: ")
-    AWS_SECRET_ACCESS_KEY = input("Enter the AWS secret access key: ")
-
+# Function to get integer input
 def get_integer_input(prompt):
     while True:
         try:
@@ -57,15 +43,79 @@ def get_integer_input(prompt):
         except ValueError:
             print("Please enter a valid integer.")
 
-OBJECT_SIZE = get_integer_input("Enter the size of the objects in bytes: ")
-PARTS_COUNT = get_integer_input("Enter the number of parts for multi-part upload: ")
-OBJECTS_COUNT = get_integer_input("Enter the number of objects to be placed: ")
-OBJECT_PREFIX = input("Enter the prefix for the objects: ")
+# Argument parser
+parser = argparse.ArgumentParser(description="Upload files to S3")
+parser.add_argument("--import_json", help="Path to JSON file for configuration", default=None)
+parser.add_argument("--bucket_name", help="Name of the bucket", default=None)
+parser.add_argument("--s3_endpoint_url", help="S3 endpoint URL", default=None)
+parser.add_argument("--aws_access_key_id", help="AWS access key ID", default=None)
+parser.add_argument("--aws_secret_access_key", help="AWS secret access key", default=None)
+parser.add_argument("--object_size", help="Size of the objects in bytes", type=int, default=None)
+parser.add_argument("--parts_count", help="Number of parts for multi-part upload", type=int, default=None)
+parser.add_argument("--objects_count", help="Number of objects to be placed", type=int, default=None)
+parser.add_argument("--object_prefix", help="Prefix for the objects", default=None)
+parser.add_argument("--logging", help="Enable debug logging", action="store_true")
+args = parser.parse_args()
+
+if args.import_json:
+    credentials = read_credentials_from_json(args.import_json)
+    BUCKET_NAME = credentials["bucket_name"]
+    S3_ENDPOINT_URL = credentials["s3_endpoint_url"]
+    AWS_ACCESS_KEY_ID = credentials["aws_access_key_id"]
+    AWS_SECRET_ACCESS_KEY = credentials["aws_secret_access_key"]
+else:
+    JSON_IMPORT = input("Do you want to import JSON file for configuration? (yes/no): ")
+    if JSON_IMPORT.lower() == "yes":
+        JSON_FILE_PATH = input("Enter the JSON file path: ")
+        credentials = read_credentials_from_json(JSON_FILE_PATH)
+        BUCKET_NAME = credentials["bucket_name"]
+        S3_ENDPOINT_URL = credentials["s3_endpoint_url"]
+        AWS_ACCESS_KEY_ID = credentials["aws_access_key_id"]
+        AWS_SECRET_ACCESS_KEY = credentials["aws_secret_access_key"]
+    else:
+        if args.bucket_name:
+            BUCKET_NAME = args.bucket_name
+        else:
+            BUCKET_NAME = input("Enter the bucket name: ")
+
+        if args.s3_endpoint_url:
+            S3_ENDPOINT_URL = args.s3_endpoint_url
+        else:
+            S3_ENDPOINT_URL = input("Enter the S3 endpoint URL, (EXAMPLE http://example.com:443): ")
+
+        if args.aws_access_key_id:
+            AWS_ACCESS_KEY_ID = args.aws_access_key_id
+        else:
+            AWS_ACCESS_KEY_ID = input("Enter the AWS access key ID: ")
+
+        if args.aws_secret_access_key:
+            AWS_SECRET_ACCESS_KEY = args.aws_secret_access_key
+        else:
+            AWS_SECRET_ACCESS_KEY = input("Enter the AWS secret access key: ")
+
+if args.object_size:
+    OBJECT_SIZE = args.object_size
+else:
+    OBJECT_SIZE = get_integer_input("Enter the size of the objects in bytes: ")
+
+if args.parts_count:
+    PARTS_COUNT = args.parts_count
+else:
+    PARTS_COUNT = get_integer_input("Enter the number of parts for multi-part upload: ")
+
+if args.objects_count:
+    OBJECTS_COUNT = args.objects_count
+else:
+    OBJECTS_COUNT = get_integer_input("Enter the number of objects to be placed: ")
+
+if args.object_prefix:
+    OBJECT_PREFIX = args.object_prefix
+else:
+    OBJECT_PREFIX = input("Enter the prefix for the objects: ")
 
 # Set logging level
-LOG_LEVEL = input("Enter the logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL): ")
-LOG_LEVELS = {'DEBUG': logging.DEBUG, 'INFO': logging.INFO, 'WARNING': logging.WARNING, 'ERROR': logging.ERROR, 'CRITICAL': logging.CRITICAL}
-file_logger.setLevel(LOG_LEVELS.get(LOG_LEVEL.upper()))
+LOG_LEVEL = logging.DEBUG if args.logging else logging.INFO
+file_logger.setLevel(LOG_LEVEL)
 
 # Create an S3 client
 s3 = boto3.client("s3",
