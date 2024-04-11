@@ -6,6 +6,7 @@ import logging
 from threading import Thread
 from queue import Queue
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Setup logging
 LOG_FILENAME = 's3_upload.log'
@@ -55,6 +56,7 @@ parser.add_argument("--parts_count", help="Number of parts for multi-part upload
 parser.add_argument("--objects_count", help="Number of objects to be placed", type=int, default=None)
 parser.add_argument("--object_prefix", help="Prefix for the objects", default=None)
 parser.add_argument("--logging", help="Enable debug logging", action="store_true")
+parser.add_argument("--disable_checksum", help="Disable checksum checks", action="store_true")
 args = parser.parse_args()
 
 if args.import_json:
@@ -142,11 +144,15 @@ def create_object(arg, q):
 
         # Upload parts
         part_size = OBJECT_SIZE // PARTS_COUNT
-        for i in range(PARTS_COUNT):
-            part_content = object_content[i*part_size:(i+1)*part_size]
-            part = upload_part(i, part_content, mpu['UploadId'], object_key)
-            parts.append({'PartNumber': i+1, 'ETag': part['ETag']})
-            q.put((logging.INFO, f"PUT - Uploaded part {(i+1)} of size {part_size} for object {object_key}"))
+        futures = {}
+        with ThreadPoolExecutor(max_workers=PARTS_COUNT) as executor:
+            for i in range(PARTS_COUNT):
+                part_content = object_content[i*part_size:(i+1)*part_size]
+                futures[i] = executor.submit(upload_part, i, part_content, mpu['UploadId'], object_key)
+            for i in sorted(futures):
+                part = futures[i].result()
+                parts.append({'PartNumber': part['PartNumber'], 'ETag': part['ETag']})
+                q.put((logging.INFO, f"PUT - Uploaded part {part['PartNumber']} of size {part_size} for object {object_key}"))
 
         # Complete multi-part upload
         result = s3.complete_multipart_upload(Bucket=BUCKET_NAME, Key=object_key, UploadId=mpu['UploadId'],
@@ -164,8 +170,9 @@ def create_object(arg, q):
         return None
 
 def upload_part(i, part_content, upload_id, object_key):
-    return s3.upload_part(Bucket=BUCKET_NAME, Key=object_key, PartNumber=i+1,
+    part = s3.upload_part(Bucket=BUCKET_NAME, Key=object_key, PartNumber=i+1,
                           UploadId=upload_id, Body=part_content)
+    return {'PartNumber': i+1, 'ETag': part['ETag']}
 
 # Create a queue for the logging thread
 q = Queue()
